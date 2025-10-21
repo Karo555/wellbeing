@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
 
 enum MomentType { breath, movement, gratitude, reflection, walk, stretch, other }
 
@@ -25,16 +26,128 @@ void main() {
 class WellbeingApp extends StatelessWidget {
   const WellbeingApp({super.key});
 
+  static final ValueNotifier<bool> _didOnboard = ValueNotifier<bool>(false);
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Wellbeing',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6C63FF)),
+    return ValueListenableBuilder<bool>(
+      valueListenable: _didOnboard,
+      builder: (context, didOnboard, _) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Wellbeing',
+          theme: ThemeData(
+            useMaterial3: true,
+            colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6C63FF)),
+          ),
+          home: didOnboard ? const HomeScreen() : OnboardingScreen(onFinish: () => _didOnboard.value = true),
+        );
+      },
+    );
+  }
+}
+
+class OnboardingScreen extends StatefulWidget {
+  const OnboardingScreen({super.key, required this.onFinish});
+  final VoidCallback onFinish;
+
+  @override
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  int _page = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          _AnimatedGradientBackground(
+            colors: [
+              scheme.primary.withOpacity(0.5),
+              scheme.secondary.withOpacity(0.5),
+            ],
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 400),
+                      child: _page == 0
+                          ? _OnboardPage(
+                              key: const ValueKey(0),
+                              title: 'A gentle place to check in',
+                              body: 'Stay for as long as you like. No countdowns, no pressure.',
+                              icon: Icons.favorite_outline,
+                            )
+                          : _OnboardPage(
+                              key: const ValueKey(1),
+                              title: 'Tap the circle for another prompt',
+                              body: 'When youre ready, tap the circle to gently change the prompt.',
+                              icon: Icons.touch_app,
+                            ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextButton(
+                        onPressed: _page == 0 ? null : () => setState(() => _page = 0),
+                        child: const Text('Back'),
+                      ),
+                      FilledButton(
+                        onPressed: () {
+                          if (_page == 0) {
+                            setState(() => _page = 1);
+                          } else {
+                            widget.onFinish();
+                          }
+                        },
+                        child: Text(_page == 0 ? 'Next' : 'Get started'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
-      home: const HomeScreen(),
+    );
+  }
+}
+
+class _OnboardPage extends StatelessWidget {
+  const _OnboardPage({super.key, required this.title, required this.body, required this.icon});
+  final String title;
+  final String body;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 72, color: scheme.primary),
+        const SizedBox(height: 24),
+        Text(title, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        Text(
+          body,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }
@@ -51,6 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int currentTipIndex = 0;
   bool showRecommendation = true;
   int _selectedIndex = 0;
+  bool _firstConnectSession = true;
 
   final List<Moment> _moments = [];
 
@@ -244,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               const Spacer(),
               FilledButton(
-                onPressed: () {},
+                onPressed: _openConnectCheckIn,
                 child: const Text('Start a 1‑minute check‑in'),
               ),
               const SizedBox(height: 12),
@@ -363,6 +477,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (result == 'breatheCompleted') {
       _addMoment(type: MomentType.breath, source: 'breathe');
+    }
+  }
+
+  void _openConnectCheckIn() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => ConnectCheckInScreen(showFirstSessionHints: _firstConnectSession)),
+    );
+    if (mounted) {
+      setState(() {
+        _firstConnectSession = false;
+      });
+      if (result == 'connectSaved') {
+        _addMoment(type: MomentType.reflection, source: 'manual');
+      }
     }
   }
 
@@ -1086,3 +1214,502 @@ class _MomentCard extends StatelessWidget {
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 }
+
+class ConnectCheckInScreen extends StatefulWidget {
+  const ConnectCheckInScreen({super.key, this.showFirstSessionHints = false});
+  final bool showFirstSessionHints;
+
+  @override
+  State<ConnectCheckInScreen> createState() => _ConnectCheckInScreenState();
+}
+
+class _ConnectCheckInScreenState extends State<ConnectCheckInScreen> with TickerProviderStateMixin {
+  late final AnimationController _promptController; // crossfade prompt
+  late final AnimationController _pulseController; // added pulse animation controller
+  late final Animation<double> _pulse;
+  late final AnimationController _rippleController; // tap ripple
+  late final Animation<double> _ripple; // 0..1 for ripple radius
+  late final AnimationController _haloController; // ambient halo drift
+  late final Animation<double> _halo; // 0..1 for color drift
+  late final AnimationController _arrivalController;
+
+  int _promptIndex = 0;
+  int _softProgress = 0;
+
+  // Added fields per instructions:
+  bool _showOneTimeHint = true; // fades once per session
+  bool _reduceMotionPref = false; // user preference via options
+  bool _onePromptOnly = false; // if true, keep repeating the same prompt
+  bool _autoAdvance = false; // optional, off by default
+  String? _moreDetail; // revealed on double-tap
+
+  static const List<String> prompts = [
+    'Feel your feet on the ground.',
+    'Soften your jaw.',
+    'Notice your breath.',
+    'Let your shoulders drop.',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    _promptController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+    _promptController.forward(from: 0);
+    _showOneTimeHint = widget.showFirstSessionHints;
+
+    // Initialize pulse controller and animation
+    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 10))
+      ..repeat(reverse: true);
+    _pulse = Tween(begin: 0.95, end: 1.05).chain(CurveTween(curve: Curves.easeInOut)).animate(_pulseController);
+
+    _rippleController = AnimationController(vsync: this, duration: const Duration(milliseconds: 700));
+    _ripple = CurvedAnimation(parent: _rippleController, curve: Curves.easeOutCubic);
+
+    // Ambient halo drift (very slow)
+    _haloController = AnimationController(vsync: this, duration: const Duration(seconds: 40))..repeat(reverse: true);
+    _halo = CurvedAnimation(parent: _haloController, curve: Curves.easeInOut);
+
+    _arrivalController = AnimationController(vsync: this, duration: const Duration(seconds: 7));
+    _arrivalController.forward();
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        _arrivalController.reverse();
+      }
+    });
+
+    _arrivalController.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed && mounted) {
+        setState(() => _showOneTimeHint = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    _pulseController.dispose();
+    _rippleController.dispose();
+    _haloController.dispose();
+    _arrivalController.dispose();
+    super.dispose();
+  }
+
+  void _nextPrompt() {
+    // Crossfade to next prompt and increment soft progress up to 5
+    _rippleController.forward(from: 0); // start ripple
+    _promptController.reverse(from: 1.0).whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        if (!_onePromptOnly) {
+          _promptIndex = (_promptIndex + 1) % prompts.length;
+        }
+        _softProgress = (_softProgress + 1).clamp(0, 5);
+        _moreDetail = null; // reset any expanded detail
+      });
+      _promptController.forward(from: 0);
+    });
+  }
+
+  void _openOptions() async {
+    final result = await showModalBottomSheet<List<bool>>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        bool reduceMotion = _reduceMotionPref;
+        bool onePromptOnly = _onePromptOnly;
+        bool autoAdvance = _autoAdvance;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Icon(Icons.tune, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text('Options', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Reduce motion'),
+                      subtitle: const Text('Minimize animations during the session'),
+                      value: reduceMotion,
+                      onChanged: (v) => setSheetState(() => reduceMotion = v),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('One prompt only'),
+                      subtitle: const Text('Stay with a single prompt'),
+                      value: onePromptOnly,
+                      onChanged: (v) => setSheetState(() => onePromptOnly = v),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Auto-advance every 20s'),
+                      subtitle: const Text('If enabled, prompts change gently on their own'),
+                      value: autoAdvance,
+                      onChanged: (v) => setSheetState(() => autoAdvance = v),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(context, [reduceMotion, onePromptOnly, autoAdvance]),
+                        child: const Text('Done'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        _reduceMotionPref = result[0];
+        _onePromptOnly = result[1];
+        _autoAdvance = result[2];
+      });
+    }
+  }
+
+  void _showExitSheet() async {
+    final scheme = Theme.of(context).colorScheme;
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        bool save = false;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle_outline, color: scheme.primary),
+                        const SizedBox(width: 8),
+                        Text('Thanks for taking a moment', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Save this moment'),
+                      subtitle: const Text('Add it to your scrapbook'),
+                      value: save,
+                      onChanged: (v) => setSheetState(() => save = v ?? false),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
+                        const SizedBox(width: 8),
+                        FilledButton(onPressed: () => Navigator.pop(context, save), child: const Text('Close')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted) return;
+    if (result == true) {
+      // Notify parent via Navigator pop with a flag so Home can record a moment if desired in future
+      Navigator.of(context).pop('connectSaved');
+    } else {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final media = MediaQuery.of(context);
+    final reduceMotion = media.disableAnimations || _reduceMotionPref;
+
+    if (_autoAdvance) {
+      // schedule a gentle auto-advance every ~20s while this widget is visible
+      Future.delayed(const Duration(seconds: 20), () {
+        if (mounted && _autoAdvance) {
+          _nextPrompt();
+        }
+      });
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Connect'),
+        backgroundColor: Colors.transparent,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: _showExitSheet,
+            tooltip: 'Close',
+          ),
+        ],
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  scheme.primary.withOpacity(0.2),
+                  scheme.secondary.withOpacity(0.2),
+                ],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 180,
+                    height: 180,
+                    child: GestureDetector(
+                      onTap: _nextPrompt,
+                      onLongPress: _openOptions,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // Soft progress segmented ring (up to 5 segments)
+                          CustomPaint(
+                            size: const Size(180, 180),
+                            painter: _SoftProgressRing(
+                              color: scheme.primary.withOpacity(0.18),
+                              highlightColor: scheme.primary.withOpacity(0.40),
+                              segments: 5,
+                              filled: _softProgress,
+                            ),
+                          ),
+                          // Ambient halo with very gentle brightness drift
+                          AnimatedBuilder(
+                            animation: _halo,
+                            builder: (context, _) {
+                              final brightness = 0.20 + 0.08 * _halo.value; // 0.20..0.28
+                              return Container(
+                                width: 160,
+                                height: 160,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: scheme.primary.withOpacity(reduceMotion ? 0.24 : brightness),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: scheme.primary.withOpacity(0.12 + 0.06 * _halo.value),
+                                      blurRadius: 24,
+                                      spreadRadius: 6,
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                          // Tap ripple feedback
+                          AnimatedBuilder(
+                            animation: _ripple,
+                            builder: (context, _) {
+                              final v = _ripple.value;
+                              return IgnorePointer(
+                                child: Container(
+                                  width: 140 + 60 * v,
+                                  height: 140 + 60 * v,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: scheme.primary.withOpacity((1 - v) * 0.12),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          // Calm inner circle with subtle pulse
+                          ScaleTransition(
+                            scale: reduceMotion ? const AlwaysStoppedAnimation(1.0) : _pulse,
+                            child: Container(
+                              width: 140,
+                              height: 140,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.transparent,
+                              ),
+                            ),
+                          ),
+                          // Arrival hint overlay that fades away
+                          FadeTransition(
+                            opacity: _arrivalController,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                              child: Text(
+                                'Take your time',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      color: scheme.onSurface.withOpacity(0.9),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  GestureDetector(
+                    onDoubleTap: () {
+                      setState(() {
+                        _moreDetail = _moreDetail == null ? 'If you like, notice the weight of your heels.' : null;
+                      });
+                    },
+                    child: FadeTransition(
+                      opacity: _promptController.drive(CurveTween(curve: Curves.easeInOut)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                        child: Column(
+                          children: [
+                            Text(
+                              prompts[_promptIndex],
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: scheme.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                            if (_moreDetail != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _moreDetail!,
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Just notice. No need to change anything.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_showOneTimeHint) FadeTransition(
+                    opacity: _arrivalController,
+                    child: Text(
+                      'Tap the circle when you’d like another prompt',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SoftProgressRing extends CustomPainter {
+  _SoftProgressRing({
+    required this.color,
+    required this.highlightColor,
+    required this.segments,
+    required this.filled,
+  });
+
+  final Color color;
+  final Color highlightColor;
+  final int segments;
+  final int filled;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8
+      ..strokeCap = StrokeCap.round;
+
+    final radius = size.width / 2 - 8; // padding
+    final center = Offset(size.width / 2, size.height / 2);
+
+    final arcAngle = 2 * math.pi / segments;
+    const gapAngle = math.pi / 36; // 5 degrees gap
+
+    for (var i = 0; i < segments; i++) {
+      final startAngle = (i * arcAngle) - math.pi / 2 + gapAngle / 2;
+      paint.color = i < filled ? highlightColor : color;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        startAngle,
+        arcAngle - gapAngle,
+        false,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SoftProgressRing oldDelegate) {
+    return oldDelegate.filled != filled ||
+        oldDelegate.color != color ||
+        oldDelegate.highlightColor != highlightColor;
+  }
+}
+
