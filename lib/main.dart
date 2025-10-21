@@ -1,5 +1,23 @@
 import 'package:flutter/material.dart';
 
+enum MomentType { breath, movement, gratitude, reflection, walk, stretch, other }
+
+class Moment {
+  Moment({
+    required this.id,
+    required this.date,
+    required this.type,
+    this.note,
+    this.source,
+  });
+
+  final String id;
+  final DateTime date;
+  final MomentType type;
+  final String? note;
+  final String? source; // 'microFlow', 'breathe', 'manual'
+}
+
 void main() {
   runApp(const WellbeingApp());
 }
@@ -34,6 +52,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool showRecommendation = true;
   int _selectedIndex = 0;
 
+  final List<Moment> _moments = [];
+
   final List<String> tips = const [
     'Take 5 slow breaths. Inhale for 4, exhale for 6.',
     'Drink a glass of water and stretch your neck and shoulders.',
@@ -50,19 +70,87 @@ class _HomeScreenState extends State<HomeScreen> {
     'Releasing jaw and shoulder tension signals safety and calms the nervous system.',
   ];
 
-  void _doNow() {
+  void _addMoment({required MomentType type, String? note, required String source}) {
     setState(() {
-      streak += 1;
-      showRecommendation = false;
+      _moments.insert(
+        0,
+        Moment(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          date: DateTime.now(),
+          type: type,
+          note: note,
+          source: source,
+        ),
+      );
     });
-    // Optional: Add a subtle feedback such as a SnackBar.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Nice! Streak is now $streak'),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 1),
+  }
+
+  MomentType _inferMomentTypeFromTip(String tip) {
+    final t = tip.toLowerCase();
+    if (t.contains('breath') || t.contains('breathe')) return MomentType.breath;
+    if (t.contains('stretch')) return MomentType.stretch;
+    if (t.contains('walk')) return MomentType.walk;
+    if (t.contains('grateful') || t.contains('gratitude')) return MomentType.gratitude;
+    return MomentType.reflection;
+  }
+
+  Future<void> _startMicroFlow() async {
+    final duration = const Duration(seconds: 15);
+    bool completed = false;
+
+    await showModalBottomSheet(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
+      builder: (context) {
+        return _MicroFlowSheet(
+          duration: duration,
+          onCancel: () {
+            Navigator.of(context).pop();
+          },
+          onComplete: () {
+            completed = true;
+            Navigator.of(context).pop();
+          },
+        );
+      },
     );
+
+    if (completed) {
+      // Increment streak and hide recommendation with undo option
+      setState(() {
+        streak += 1;
+        showRecommendation = false;
+        _addMoment(type: _inferMomentTypeFromTip(tips[currentTipIndex]), source: 'microFlow');
+      });
+
+      final messenger = ScaffoldMessenger.of(context);
+      final undoController = messenger.showSnackBar(
+        SnackBar(
+          content: Text('Nice! Streak is now $streak'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              setState(() {
+                streak = (streak - 1).clamp(0, 1 << 31);
+                showRecommendation = true;
+              });
+            },
+          ),
+        ),
+      );
+      await undoController.closed; // no-op, just waits until it disappears
+    }
+  }
+
+  void _doNow() {
+    _startMicroFlow();
   }
 
   void _swapTip() {
@@ -169,7 +257,99 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       case 1:
-        return const Center(child: Text('Insights coming soon'));
+        return Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('Your scrapbook', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final note = await showDialog<String>(
+                        context: context,
+                        builder: (context) {
+                          final controller = TextEditingController();
+                          MomentType selected = MomentType.reflection;
+                          return StatefulBuilder(
+                            builder: (context, setDialogState) {
+                              return AlertDialog(
+                                title: const Text('Add a moment'),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TextField(
+                                      controller: controller,
+                                      decoration: const InputDecoration(hintText: 'Add a few words (optional)'),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    DropdownButton<MomentType>(
+                                      value: selected,
+                                      onChanged: (v) {
+                                        if (v != null) {
+                                          setDialogState(() {
+                                            selected = v;
+                                          });
+                                        }
+                                      },
+                                      items: const [
+                                        DropdownMenuItem(value: MomentType.breath, child: Text('Breath')),
+                                        DropdownMenuItem(value: MomentType.movement, child: Text('Movement')),
+                                        DropdownMenuItem(value: MomentType.gratitude, child: Text('Gratitude')),
+                                        DropdownMenuItem(value: MomentType.reflection, child: Text('Reflection')),
+                                        DropdownMenuItem(value: MomentType.walk, child: Text('Walk')),
+                                        DropdownMenuItem(value: MomentType.stretch, child: Text('Stretch')),
+                                        DropdownMenuItem(value: MomentType.other, child: Text('Other')),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                                  FilledButton(onPressed: () => Navigator.pop(context, '${selected.index}|${controller.text}'), child: const Text('Add')),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                      );
+                      if (note != null) {
+                        final parts = note.split('|');
+                        final typeIndex = int.tryParse(parts.first) ?? MomentType.reflection.index;
+                        final type = MomentType.values[typeIndex];
+                        final text = parts.length > 1 ? parts.sublist(1).join('|') : null;
+                        _addMoment(type: type, note: (text?.isEmpty ?? true) ? null : text, source: 'manual');
+                      }
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add moment'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: _moments.isEmpty
+                    ? Center(
+                        child: Text(
+                          'A calm place to collect small moments you chose care.',
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: _moments.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final m = _moments[index];
+                          return _MomentCard(moment: m);
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
       case 2:
         return const Center(child: Text('Me coming soon'));
       default:
@@ -177,10 +357,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _openBreathe() {
-    Navigator.of(context).push(
+  void _openBreathe() async {
+    final result = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const BreatheScreen()),
     );
+    if (result == 'breatheCompleted') {
+      _addMoment(type: MomentType.breath, source: 'breathe');
+    }
   }
 
   @override
@@ -451,6 +634,127 @@ class _DailyRecommendationCard extends StatelessWidget {
   }
 }
 
+class _MicroFlowSheet extends StatefulWidget {
+  const _MicroFlowSheet({
+    required this.duration,
+    required this.onCancel,
+    required this.onComplete,
+  });
+
+  final Duration duration;
+  final VoidCallback onCancel;
+  final VoidCallback onComplete;
+
+  @override
+  State<_MicroFlowSheet> createState() => _MicroFlowSheetState();
+}
+
+class _MicroFlowSheetState extends State<_MicroFlowSheet> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: widget.duration)
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          widget.onComplete();
+        }
+      })
+      ..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _remaining() {
+    final total = widget.duration.inSeconds;
+    final left = (total * (1.0 - _controller.value)).ceil();
+    final s = left % 60;
+    return '00:${s.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: scheme.onSurfaceVariant.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Text(
+              'Take a moment',
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                return Column(
+                  children: [
+                    SizedBox(
+                      width: 140,
+                      height: 140,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          CircularProgressIndicator(
+                            value: _controller.value,
+                            strokeWidth: 8,
+                            backgroundColor: scheme.primary.withOpacity(0.15),
+                            valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
+                          ),
+                          Text(_remaining(), style: theme.textTheme.titleLarge),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Follow the tip for about 15 seconds. You can finish early or cancel.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                OutlinedButton(
+                  onPressed: widget.onCancel,
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 12),
+                FilledButton(
+                  onPressed: widget.onComplete,
+                  child: const Text("I'm done"),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class BreatheScreen extends StatefulWidget {
   const BreatheScreen({super.key});
 
@@ -471,6 +775,7 @@ class _BreatheScreenState extends State<BreatheScreen> with TickerProviderStateM
   static const int sessionSeconds = 120; // 2 minutes
 
   String _phaseLabel = 'Get ready';
+  bool _reported = false;
 
   @override
   void initState() {
@@ -528,6 +833,7 @@ class _BreatheScreenState extends State<BreatheScreen> with TickerProviderStateM
     _sessionController.reset();
     setState(() {
       _phaseLabel = 'Get ready';
+      _reported = false;
     });
   }
 
@@ -593,6 +899,18 @@ class _BreatheScreenState extends State<BreatheScreen> with TickerProviderStateM
                 builder: (context, _) {
                   final running = _phaseController.isAnimating && _sessionController.isAnimating;
                   final finished = _sessionController.isDismissed; // reached 0
+
+                  if (finished && !_reported) {
+                    _reported = true;
+                    // Notify parent to record a moment
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      final ctx = context;
+                      if (Navigator.of(ctx).canPop()) {
+                        Navigator.of(ctx).pop('breatheCompleted');
+                      }
+                    });
+                  }
+
                   return Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -672,5 +990,99 @@ class _BreatheScreenState extends State<BreatheScreen> with TickerProviderStateM
         ],
       ),
     );
+  }
+}
+
+class _MomentCard extends StatelessWidget {
+  const _MomentCard({required this.moment});
+
+  final Moment moment;
+
+  IconData _iconFor(MomentType type) {
+    switch (type) {
+      case MomentType.breath:
+        return Icons.self_improvement;
+      case MomentType.movement:
+        return Icons.directions_run;
+      case MomentType.gratitude:
+        return Icons.favorite_border;
+      case MomentType.reflection:
+        return Icons.edit_note;
+      case MomentType.walk:
+        return Icons.directions_walk;
+      case MomentType.stretch:
+        return Icons.accessibility_new;
+      case MomentType.other:
+        return Icons.blur_on;
+    }
+  }
+
+  String _titleFor(MomentType type) {
+    switch (type) {
+      case MomentType.breath:
+        return 'You took a breathing break';
+      case MomentType.movement:
+        return 'You moved your body';
+      case MomentType.gratitude:
+        return 'You wrote a gratitude note';
+      case MomentType.reflection:
+        return 'You took a mindful moment';
+      case MomentType.walk:
+        return 'You took a short walk';
+      case MomentType.stretch:
+        return 'You stretched a bit';
+      case MomentType.other:
+        return 'You chose care';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: scheme.primary.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 6)),
+        ],
+        border: Border.all(color: scheme.outlineVariant.withOpacity(0.5)),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(_iconFor(moment.type), color: scheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_titleFor(moment.type), style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                if ((moment.note ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(moment.note!, style: theme.textTheme.bodyMedium),
+                ],
+                const SizedBox(height: 6),
+                Text(
+                  _friendlyTime(moment.date),
+                  style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _friendlyTime(DateTime dt) {
+    final now = DateTime.now();
+    final difference = now.difference(dt);
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes} min ago';
+    if (difference.inHours < 24) return '${difference.inHours} hrs ago';
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 }
