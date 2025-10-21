@@ -159,6 +159,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: () {},
                 child: const Text('Start a 1‑minute check‑in'),
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _openBreathe,
+                icon: const Icon(Icons.self_improvement),
+                label: const Text('Breathe (2 min)'),
+              ),
             ],
           ),
         );
@@ -169,6 +175,12 @@ class _HomeScreenState extends State<HomeScreen> {
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  void _openBreathe() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BreatheScreen()),
+    );
   }
 
   @override
@@ -439,3 +451,226 @@ class _DailyRecommendationCard extends StatelessWidget {
   }
 }
 
+class BreatheScreen extends StatefulWidget {
+  const BreatheScreen({super.key});
+
+  @override
+  State<BreatheScreen> createState() => _BreatheScreenState();
+}
+
+class _BreatheScreenState extends State<BreatheScreen> with TickerProviderStateMixin {
+  late final AnimationController _phaseController; // drives one 16s box cycle
+  late final AnimationController _sessionController; // counts down 120s
+  late final Animation<double> _scale; // circle scale
+
+  static const int inhale = 4;
+  static const int hold1 = 4;
+  static const int exhale = 4;
+  static const int hold2 = 4;
+  static const int cycleSeconds = inhale + hold1 + exhale + hold2; // 16
+  static const int sessionSeconds = 120; // 2 minutes
+
+  String _phaseLabel = 'Get ready';
+
+  @override
+  void initState() {
+    super.initState();
+    _phaseController = AnimationController(vsync: this, duration: const Duration(seconds: cycleSeconds));
+    _sessionController = AnimationController(vsync: this, duration: const Duration(seconds: sessionSeconds));
+
+    // Scale anim: grow on inhale, hold, shrink on exhale, hold
+    _scale = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 0.7, end: 1.0).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: inhale.toDouble(),
+      ),
+      TweenSequenceItem(
+        tween: ConstantTween(1.0),
+        weight: hold1.toDouble(),
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: 0.7).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: exhale.toDouble(),
+      ),
+      TweenSequenceItem(
+        tween: ConstantTween(0.7),
+        weight: hold2.toDouble(),
+      ),
+    ]).animate(_phaseController);
+
+    _phaseController.addListener(_updatePhaseLabel);
+    _phaseController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _phaseController.forward(from: 0); // loop the breathing cycle
+      }
+    });
+
+    _start();
+  }
+
+  void _start() {
+    _phaseController.forward(from: 0);
+    _sessionController.reverse(from: 1.0); // counts down from full session
+  }
+
+  void _toggle() {
+    if (_phaseController.isAnimating) {
+      _phaseController.stop();
+      _sessionController.stop();
+    } else {
+      _phaseController.forward();
+      _sessionController.reverse();
+    }
+  }
+
+  void _reset() {
+    _phaseController.reset();
+    _sessionController.reset();
+    setState(() {
+      _phaseLabel = 'Get ready';
+    });
+  }
+
+  void _updatePhaseLabel() {
+    final t = _phaseController.value * cycleSeconds; // 0..16
+    String label;
+    if (t < inhale) {
+      label = 'Inhale';
+    } else if (t < inhale + hold1) {
+      label = 'Hold';
+    } else if (t < inhale + hold1 + exhale) {
+      label = 'Exhale';
+    } else {
+      label = 'Hold';
+    }
+    if (label != _phaseLabel) {
+      setState(() => _phaseLabel = label);
+    }
+  }
+
+  String _remainingText() {
+    final remaining = (_sessionController.duration!.inSeconds * _sessionController.value).round();
+    final m = remaining ~/ 60;
+    final s = remaining % 60;
+    return '${m.toString().padLeft(1, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  void dispose() {
+    _phaseController.dispose();
+    _sessionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Breathe'),
+        backgroundColor: Colors.transparent,
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Reuse a simple gradient background for calmness
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  scheme.primary.withOpacity(0.25),
+                  scheme.secondary.withOpacity(0.25),
+                ],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Center(
+              child: AnimatedBuilder(
+                animation: Listenable.merge([_phaseController, _sessionController]),
+                builder: (context, _) {
+                  final running = _phaseController.isAnimating && _sessionController.isAnimating;
+                  final finished = _sessionController.isDismissed; // reached 0
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        finished ? 'Done' : _phaseLabel,
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              color: scheme.onSurface,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: 220,
+                        height: 220,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              width: 220,
+                              height: 220,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: scheme.primary.withOpacity(0.08),
+                              ),
+                            ),
+                            ScaleTransition(
+                              scale: _scale,
+                              child: Container(
+                                width: 160,
+                                height: 160,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: scheme.primary.withOpacity(0.35),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: scheme.primary.withOpacity(0.25),
+                                      blurRadius: 24,
+                                      spreadRadius: 6,
+                                    )
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        finished ? 'Great job' : _remainingText(),
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: scheme.onSurface.withOpacity(0.9),
+                            ),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: finished ? _reset : _toggle,
+                            icon: Icon(finished ? Icons.refresh : (running ? Icons.pause : Icons.play_arrow)),
+                            label: Text(finished ? 'Reset' : (running ? 'Pause' : 'Start')),
+                          ),
+                          const SizedBox(width: 12),
+                          OutlinedButton.icon(
+                            onPressed: () => Navigator.of(context).maybePop(),
+                            icon: const Icon(Icons.close),
+                            label: const Text('Close'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
