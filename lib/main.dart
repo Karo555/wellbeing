@@ -21,8 +21,44 @@ class WellbeingApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int streak = 0;
+  int currentTipIndex = 0;
+
+  final List<String> tips = const [
+    'Take 5 slow breaths. Inhale for 4, exhale for 6.',
+    'Drink a glass of water and stretch your neck and shoulders.',
+    'Write down one thing you’re grateful for today.',
+    'Take a 1‑minute walk and notice three things you can hear.',
+    'Relax your jaw and drop your shoulders for 10 seconds.',
+  ];
+
+  void _doNow() {
+    setState(() {
+      streak += 1;
+    });
+    // Optional: Add a subtle feedback such as a SnackBar.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Nice! Streak is now $streak'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _swapTip() {
+    setState(() {
+      currentTipIndex = (currentTipIndex + 1) % tips.length;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +94,13 @@ class HomeScreen extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: scheme.onPrimaryContainer.withOpacity(0.9),
                         ),
+                  ),
+                  const SizedBox(height: 24),
+                  _DailyRecommendationCard(
+                    tip: tips[currentTipIndex],
+                    streak: streak,
+                    onDoNow: _doNow,
+                    onSwap: _swapTip,
                   ),
                   const Spacer(),
                   FilledButton(
@@ -138,6 +181,99 @@ class _AnimatedGradientBackgroundState extends State<_AnimatedGradientBackground
           ),
         );
       },
+    );
+  }
+}
+
+class _DailyRecommendationCard extends StatelessWidget {
+  const _DailyRecommendationCard({
+    required this.tip,
+    required this.streak,
+    required this.onDoNow,
+    required this.onSwap,
+  });
+
+  final String tip;
+  final int streak;
+  final VoidCallback onDoNow;
+  final VoidCallback onSwap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.2),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+        border: Border.all(color: scheme.primary.withOpacity(0.15)),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome, color: scheme.onPrimaryContainer.withOpacity(0.9)),
+              const SizedBox(width: 8),
+              Text(
+                'Daily Recommendation',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_fire_department, size: 16),
+                    const SizedBox(width: 6),
+                    Text('$streak', style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            tip,
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: scheme.onPrimaryContainer.withOpacity(0.95),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: onDoNow,
+                icon: const Icon(Icons.check_circle_outline),
+                label: const Text('Do now'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: onSwap,
+                icon: const Icon(Icons.swap_horiz),
+                label: const Text('Swap'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
