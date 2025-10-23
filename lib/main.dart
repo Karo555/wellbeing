@@ -91,7 +91,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           : _OnboardPage(
                               key: const ValueKey(1),
                               title: 'Tap the circle for another prompt',
-                              body: 'When youre ready, tap the circle to gently change the prompt.',
+                              body: 'When ready, tap the circle to gently change the prompt.',
                               icon: Icons.touch_app,
                             ),
                     ),
@@ -99,10 +99,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      TextButton(
-                        onPressed: _page == 0 ? null : () => setState(() => _page = 0),
-                        child: const Text('Back'),
-                      ),
+                      if (_page != 0)
+                        TextButton(
+                          onPressed: () => setState(() => _page = 0),
+                          child: const Text('Back'),
+                        )
+                      else
+                        const SizedBox.shrink(),
                       FilledButton(
                         onPressed: () {
                           if (_page == 0) {

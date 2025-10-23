@@ -1,0 +1,41 @@
+// Scratch File: Search Plan and Notes for Persistence Mechanisms
+
+/*
+# Search Plan: Persistence Mechanisms Exploration
+
+## Objective
+- Identify how the app persists data.
+- Locate files and classes responsible for saving/loading data.
+
+## Search Terms
+- "UserDefaults"
+- "CoreData"
+- "Realm"
+- "NSPersistentContainer"
+- "saveContext"
+- "fetchRequest"
+- "database"
+- "store"
+- "persist"
+- "FileManager"
+- "Codable" + "save"
+- "archive"
+- "data persistence"
+
+## Suspected Files/Folders
+- Persistence.swift
+- DataManager.swift
+- StorageService.swift
+- CoreDataStack.swift
+- Models folder (checking for Codable structs/classes)
+- Services folder (for custom storage implementations)
+- AppDelegate.swift (for Core Data stack setup)
+- Any folder/file named with "Storage", "Database", or "Persistence"
+
+## Notes
+- Check for any third-party libraries in Podfile or Package.swift related to persistence.
+- Review app lifecycle methods for save/load calls.
+- Examine if the app uses UserDefaults for simple settings or Core Data for complex data.
+- Look for JSON/XML/plist file read/write in the project.
+
+*/
